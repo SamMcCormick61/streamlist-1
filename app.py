@@ -474,7 +474,7 @@ def generate_ultimate_diff_views(_lines_a_orig, _lines_b_orig, _options_dict, _f
                      view_diff_lines.append(format_html_line_tuple(None, placeholder_content, "diff-placeholder"))
                      minimap_lines.append("equal")
                  diff_stats["unchanged"] += len(orig_lines_a)
-             elif tag == 'delete':
+                elif tag == 'delete':
                  for k in range(len(orig_lines_a)):
                      line_tuple = format_html_line_tuple(orig_line_nums_a[k], highlight_syntax(orig_lines_a[k], lexer), "diff-sub")
                      view_a_lines.append(line_tuple)
@@ -482,7 +482,7 @@ def generate_ultimate_diff_views(_lines_a_orig, _lines_b_orig, _options_dict, _f
                      view_diff_lines.append(line_tuple)
                      minimap_lines.append("sub")
                  diff_stats["deleted"] += len(orig_lines_a)
-             elif tag == 'insert':
+                elif tag == 'insert':
                  for k in range(len(orig_lines_b)):
                      line_tuple = format_html_line_tuple(orig_line_nums_b[k], highlight_syntax(orig_lines_b[k], lexer), "diff-add")
                      view_a_lines.append(format_html_line_tuple(None, placeholder_content, "diff-placeholder"))
@@ -490,7 +490,7 @@ def generate_ultimate_diff_views(_lines_a_orig, _lines_b_orig, _options_dict, _f
                      view_diff_lines.append(line_tuple)
                      minimap_lines.append("add")
                  diff_stats["added"] += len(orig_lines_b)
-             elif tag == 'replace':
+                elif tag == 'replace':
                  n_a, n_b = len(orig_lines_a), len(orig_lines_b)
                  diff_stats["modified"] += max(n_a, n_b)
                  for k in range(max(n_a, n_b)):
