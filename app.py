@@ -1,7 +1,7 @@
 import streamlit as st
 import difflib
 from io import StringIO
-import collections
+import html # For escaping
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -9,6 +9,60 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- CSS Styling ---
+# Inject custom CSS for styling the diff views within markdown
+st.markdown("""
+<style>
+    .diff-container {
+        font-family: Consolas, 'Courier New', monospace;
+        border: 1px solid #ccc;
+        padding: 10px;
+        border-radius: 5px;
+        background-color: #f8f9fa; /* Light background for the container */
+        overflow-y: auto; /* Enable vertical scrolling */
+        white-space: pre; /* Preserve whitespace and prevent wrapping */
+        line-height: 1.4;
+        font-size: 0.9em;
+    }
+    .diff-line {
+        display: block; /* Each line as a block */
+        min-height: 1.4em; /* Ensure consistent line height */
+    }
+    .diff-placeholder {
+        color: #aaa; /* Lighter color for placeholders */
+        background-color: #f0f0f0; /* Slightly different background for placeholders */
+        display: block;
+        min-height: 1.4em;
+    }
+    .diff-equal {
+        color: #333; /* Standard text color */
+    }
+    .diff-context {
+        color: #777; /* Slightly dimmer for context */
+    }
+    .diff-add {
+        background-color: #e6ffed; /* Light green background */
+        color: #22863a; /* Darker green text */
+    }
+    .diff-sub {
+        background-color: #ffeef0; /* Light red background */
+        color: #b31d28; /* Darker red text */
+        text-decoration: line-through; /* Optional: strike-through deleted text */
+    }
+    .diff-sep {
+        color: #888;
+        font-style: italic;
+        text-align: center;
+        background-color: #fafafa;
+        border-top: 1px dashed #ccc;
+        border-bottom: 1px dashed #ccc;
+        margin-top: 5px;
+        margin-bottom: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- Helper Function ---
 def read_file_content(uploaded_file):
@@ -38,10 +92,11 @@ def read_file_content(uploaded_file):
         return None, None
 
 # --- Core Diff Logic ---
-def generate_diff_views(lines_a, lines_b, hide_unchanged, num_context, ignore_whitespace):
+def generate_diff_views_html(lines_a, lines_b, hide_unchanged, num_context, ignore_whitespace):
     """
-    Generates three views: File A, Differences Only, File B.
+    Generates three HTML views: File A, Differences Only, File B.
     Applies filtering for unchanged lines based on options.
+    Uses HTML/CSS for styling.
     """
     if ignore_whitespace:
         processed_a = [line.strip() for line in lines_a]
@@ -50,107 +105,141 @@ def generate_diff_views(lines_a, lines_b, hide_unchanged, num_context, ignore_wh
         processed_a = lines_a
         processed_b = lines_b
 
-    # Use SequenceMatcher to get opcodes, which are better for context handling
     s = difflib.SequenceMatcher(None, processed_a, processed_b, autojunk=False)
     opcodes = s.get_opcodes()
 
-    view_a = []
-    view_b = []
-    view_diff = []
+    view_a_html = []
+    view_b_html = []
+    view_diff_html = []
     diff_stats = {"added": 0, "deleted": 0, "modified": 0, "unchanged": 0}
 
-    last_a_idx, last_b_idx = 0, 0 # Keep track of last displayed line index for context
+    last_a_idx, last_b_idx = 0, 0 # Keep track of last original line index
+    last_processed_a_idx, last_processed_b_idx = 0, 0 # Keep track of last processed line index for context logic
+
+    def escape(text):
+        return html.escape(text).replace(' ',' ') # Escape HTML chars and preserve spaces
+
+    def format_line(line_text, line_class, prefix=""):
+        return f'<span class="diff-line {line_class}">{prefix}{escape(line_text)}</span>'
+
+    placeholder_line = '<span class="diff-line diff-placeholder"> </span>' # Placeholder HTML
+    separator_line = '<div class="diff-sep">... unchanged lines hidden ...</div>'
 
     for tag, i1, i2, j1, j2 in opcodes:
-        lines_in_block_a = lines_a[i1:i2] # Use original lines for display
+        lines_in_block_a = lines_a[i1:i2] # Original lines for display
         lines_in_block_b = lines_b[j1:j2]
-
-        is_diff_block = (tag != 'equal')
 
         # --- Context Handling when Hiding Unchanged ---
         if hide_unchanged and tag == 'equal':
-            # Show context *before* a difference block
-            # Check if the *next* block is a difference
-            next_opcode_is_diff = (opcodes.index((tag, i1, i2, j1, j2)) + 1 < len(opcodes)) and opcodes[opcodes.index((tag, i1, i2, j1, j2)) + 1][0] != 'equal'
-            context_before = []
-            if next_opcode_is_diff and len(lines_in_block_a) > num_context:
-                 context_before = lines_in_block_a[-num_context:]
-                 if not view_a or view_a[-1] == "...": # Add separator if needed
-                     view_a.append("...")
-                     view_b.append("...")
-                 view_a.extend([f"  {line}" for line in context_before]) # Prefix unchanged context
-                 view_b.extend([f"  {line}" for line in lines_b[j2-num_context:j2]]) # Corresponding B context
-                 last_a_idx = i2
-                 last_b_idx = j2
+            # Context *before* a difference: Show last `num_context` lines of this equal block
+            if len(lines_in_block_a) > num_context * 2: # Only show context if block is large enough
+                 # Check if the *next* block is a difference
+                 current_opcode_index = opcodes.index((tag, i1, i2, j1, j2))
+                 next_opcode_is_diff = (current_opcode_index + 1 < len(opcodes)) and opcodes[current_opcode_index + 1][0] != 'equal'
 
-            # Show context *after* a difference block
-            # Check if the *previous* block was a difference (handled when processing the diff block itself)
-            # We mainly skip the bulk of equal blocks here
-            if not context_before and (view_a and view_a[-1] != "..."): # Add separator if context wasn't added and lines were skipped
-                view_a.append("...")
-                view_b.append("...")
+                 # Show context lines *before* the gap (first num_context)
+                 if last_processed_a_idx < i1: # If there was a previous diff block
+                     if i1 - last_processed_a_idx > num_context: # Check if lines were actually skipped
+                         view_a_html.append(separator_line)
+                         view_b_html.append(separator_line)
+                     context_a = lines_in_block_a[:num_context]
+                     context_b = lines_in_block_b[:num_context]
+                     view_a_html.extend([format_line(line, "diff-context", "  ") for line in context_a])
+                     view_b_html.extend([format_line(line, "diff-context", "  ") for line in context_b])
+                     view_diff_html.extend([placeholder_line] * len(context_a))
+
+                 # Show context lines *after* the gap (last num_context) if next is diff
+                 if next_opcode_is_diff:
+                     if i2 - i1 > num_context: # Check if lines will be skipped after context
+                          view_a_html.append(separator_line)
+                          view_b_html.append(separator_line)
+                     context_a = lines_in_block_a[-num_context:]
+                     context_b = lines_in_block_b[-num_context:]
+                     view_a_html.extend([format_line(line, "diff-context", "  ") for line in context_a])
+                     view_b_html.extend([format_line(line, "diff-context", "  ") for line in context_b])
+                     view_diff_html.extend([placeholder_line] * len(context_a))
+
+            else: # Small equal block, show all of it
+                view_a_html.extend([format_line(line, "diff-equal", "  ") for line in lines_in_block_a])
+                view_b_html.extend([format_line(line, "diff-equal", "  ") for line in lines_in_block_b])
+                view_diff_html.extend([placeholder_line] * len(lines_in_block_a))
+                diff_stats["unchanged"] += len(lines_in_block_a)
 
         # --- Process Difference or All Lines (if not hiding) ---
         else: # tag != 'equal' or not hide_unchanged
-            # Add context *before* this block if hiding and previous was equal & skipped
-            if hide_unchanged and last_a_idx < i1:
-                 # Find the preceding equal block's lines
-                 prev_equal_lines_a = lines_a[last_a_idx:i1]
+            # Add context from preceding equal block if it was skipped
+            if hide_unchanged and last_processed_a_idx < i1 : # Check if prev block was equal and skipped
+                 prev_equal_lines_a = lines_a[last_a_idx:i1] # Get original lines
                  prev_equal_lines_b = lines_b[last_b_idx:j1]
-                 if len(prev_equal_lines_a) > num_context:
-                     if not view_a or view_a[-1] == "...": # Add separator if needed
-                        view_a.append("...")
-                        view_b.append("...")
-                     context_lines_a = prev_equal_lines_a[:num_context]
-                     context_lines_b = prev_equal_lines_b[:num_context]
-                     view_a.extend([f"  {line}" for line in context_lines_a])
-                     view_b.extend([f"  {line}" for line in context_lines_b])
+                 if len(prev_equal_lines_a) > num_context: # Only add context if lines were hidden
+                     if not view_a_html or view_a_html[-1] != separator_line: # Avoid double separators
+                         view_a_html.append(separator_line)
+                         view_b_html.append(separator_line)
+                     context_a = prev_equal_lines_a[:num_context] # First N lines as context
+                     context_b = prev_equal_lines_b[:num_context]
+                     view_a_html.extend([format_line(line, "diff-context", "  ") for line in context_a])
+                     view_b_html.extend([format_line(line, "diff-context", "  ") for line in context_b])
+                     view_diff_html.extend([placeholder_line] * len(context_a))
 
-
-            # Add the actual lines for this opcode
+            # Add the actual lines for this opcode tag
             if tag == 'equal':
-                view_a.extend([f"  {line}" for line in lines_in_block_a]) # Prefix with '  '
-                view_b.extend([f"  {line}" for line in lines_in_block_b])
-                view_diff.extend([""] * len(lines_in_block_a)) # Placeholders in diff view
+                view_a_html.extend([format_line(line, "diff-equal", "  ") for line in lines_in_block_a])
+                view_b_html.extend([format_line(line, "diff-equal", "  ") for line in lines_in_block_b])
+                view_diff_html.extend([placeholder_line] * len(lines_in_block_a))
                 diff_stats["unchanged"] += len(lines_in_block_a)
             elif tag == 'delete':
-                view_a.extend([f"- {line}" for line in lines_in_block_a]) # Prefix with '- '
-                view_b.extend([""] * len(lines_in_block_a)) # Placeholders
-                view_diff.extend([f"- {line}" for line in lines_in_block_a])
+                formatted_lines = [format_line(line, "diff-sub", "- ") for line in lines_in_block_a]
+                view_a_html.extend(formatted_lines)
+                view_b_html.extend([placeholder_line] * len(lines_in_block_a))
+                view_diff_html.extend(formatted_lines)
                 diff_stats["deleted"] += len(lines_in_block_a)
             elif tag == 'insert':
-                view_a.extend([""] * len(lines_in_block_b)) # Placeholders
-                view_b.extend([f"+ {line}" for line in lines_in_block_b]) # Prefix with '+ '
-                view_diff.extend([f"+ {line}" for line in lines_in_block_b])
+                formatted_lines = [format_line(line, "diff-add", "+ ") for line in lines_in_block_b]
+                view_a_html.extend([placeholder_line] * len(lines_in_block_b))
+                view_b_html.extend(formatted_lines)
+                view_diff_html.extend(formatted_lines)
                 diff_stats["added"] += len(lines_in_block_b)
             elif tag == 'replace':
-                 # Treat replace as delete + insert for clearer side-by-side
-                 delta = len(lines_in_block_a) - len(lines_in_block_b)
-                 view_a.extend([f"- {line}" for line in lines_in_block_a])
-                 view_b.extend([f"+ {line}" for line in lines_in_block_b])
-                 view_diff.extend([f"- {line}" for line in lines_in_block_a])
-                 view_diff.extend([f"+ {line}" for line in lines_in_block_b])
-                 diff_stats["modified"] += max(len(lines_in_block_a), len(lines_in_block_b)) # Count modified lines
+                diff_stats["modified"] += max(len(lines_in_block_a), len(lines_in_block_b))
+                delta = len(lines_in_block_a) - len(lines_in_block_b)
+                deleted_lines = [format_line(line, "diff-sub", "- ") for line in lines_in_block_a]
+                added_lines = [format_line(line, "diff-add", "+ ") for line in lines_in_block_b]
 
-                 # Add placeholders to make columns align better if lengths differ
-                 if delta > 0: # More lines in A than B
-                     view_b.extend([""] * delta)
-                 elif delta < 0: # More lines in B than A
-                     view_a.extend([""] * abs(delta))
+                view_a_html.extend(deleted_lines)
+                view_b_html.extend(added_lines)
+                view_diff_html.extend(deleted_lines)
+                view_diff_html.extend(added_lines)
 
-            last_a_idx = i2
-            last_b_idx = j2
+                if delta > 0: # More lines in A than B
+                    view_b_html.extend([placeholder_line] * delta)
+                elif delta < 0: # More lines in B than A
+                    view_a_html.extend([placeholder_line] * abs(delta))
+
+        # Update indices for the next iteration
+        last_a_idx = i2
+        last_b_idx = j2
+        last_processed_a_idx = i2 # Update processed index tracker as well
+        last_processed_b_idx = j2
 
 
-    # Filter the diff view to only show actual differences
-    final_diff_view = [line for line in view_diff if line.strip() and not line.startswith("  ")]
+    # Filter the diff view to only show actual differences (non-placeholders)
+    # Keep separators if they exist
+    final_diff_view_html = [line for line in view_diff_html if 'diff-placeholder' not in line or 'diff-sep' in line]
+    # If only separators remain, clear it
+    if all('diff-sep' in line for line in final_diff_view_html):
+         final_diff_view_html = ["<span class='diff-line diff-context'>No differences found</span>"]
+    elif not final_diff_view_html:
+         final_diff_view_html = ["<span class='diff-line diff-context'>No differences found</span>"]
 
-    # Calculate a reasonable height for text areas
-    # Max height of 800, proportional to longest view, min height 200
-    max_lines = max(len(view_a), len(view_b), len(final_diff_view), 1) # Avoid division by zero
-    height = min(800, max(200, max_lines * 18)) # Approx 18px per line
 
-    return "\n".join(view_a), "\n".join(final_diff_view), "\n".join(view_b), diff_stats, height
+    # Combine HTML lines into single strings for each view
+    # Wrap each view in a container div for scrolling and styling
+    container_style = "max-height: 600px;" # Adjust max height as needed
+    html_a = f'<div class="diff-container" style="{container_style}">{"".join(view_a_html)}</div>'
+    html_diff = f'<div class="diff-container" style="{container_style}">{"".join(final_diff_view_html)}</div>'
+    html_b = f'<div class="diff-container" style="{container_style}">{"".join(view_b_html)}</div>'
+
+    return html_a, html_diff, html_b, diff_stats
 
 
 # --- Sidebar Options ---
@@ -165,7 +254,7 @@ ignore_whitespace = st.sidebar.checkbox("Ignore Leading/Trailing Whitespace", va
 
 # --- Main App ---
 st.title("↔️ File Comparison Tool")
-st.write("Upload two text files. Differences are highlighted with `+` (added) or `-` (deleted) prefixes.")
+st.write("Upload two text files. Differences are highlighted by color.")
 
 # --- File Upload Row ---
 upload_col1, upload_col2 = st.columns(2)
@@ -181,8 +270,8 @@ if uploaded_file_a is not None and uploaded_file_b is not None:
 
     if lines_a is not None and lines_b is not None: # Proceed only if both files read successfully
 
-        # Generate the views using the helper function
-        view_a_str, view_diff_str, view_b_str, diff_stats, text_area_height = generate_diff_views(
+        # Generate the HTML views using the updated helper function
+        view_a_html, view_diff_html, view_b_html, diff_stats = generate_diff_views_html(
             lines_a,
             lines_b,
             hide_unchanged,
@@ -192,9 +281,8 @@ if uploaded_file_a is not None and uploaded_file_b is not None:
 
         st.subheader("📊 Comparison Summary")
         stat_cols = st.columns(4)
-        stat_cols[0].metric("Lines Added", f"{diff_stats['added']}", delta=diff_stats['added'], delta_color="normal")
-        stat_cols[1].metric("Lines Deleted", f"{diff_stats['deleted']}", delta=-diff_stats['deleted'] if diff_stats['deleted'] > 0 else 0, delta_color="inverse")
-        # Note: Modified stat calculation is approximate based on replace blocks
+        stat_cols[0].metric("Lines Added", f"{diff_stats['added']}", delta=diff_stats['added'] if diff_stats['added'] > 0 else None)
+        stat_cols[1].metric("Lines Deleted", f"{diff_stats['deleted']}", delta=-diff_stats['deleted'] if diff_stats['deleted'] > 0 else None, delta_color="inverse")
         stat_cols[2].metric("Lines Modified (Replaced)", f"{diff_stats['modified']}")
         stat_cols[3].metric("Lines Unchanged", f"{diff_stats['unchanged']}")
 
@@ -205,16 +293,15 @@ if uploaded_file_a is not None and uploaded_file_b is not None:
 
         with col1:
             st.caption(f"File A: {uploaded_file_a.name}")
-            # Use st.text_area for scrollable, selectable text with fixed height
-            st.text_area("File A Content", value=view_a_str, height=text_area_height, key="view_a", disabled=True, label_visibility="collapsed")
+            st.markdown(view_a_html, unsafe_allow_html=True)
 
         with col2:
             st.caption("Differences Only")
-            st.text_area("Differences", value=view_diff_str, height=text_area_height, key="view_diff", disabled=True, label_visibility="collapsed")
+            st.markdown(view_diff_html, unsafe_allow_html=True)
 
         with col3:
             st.caption(f"File B: {uploaded_file_b.name}")
-            st.text_area("File B Content", value=view_b_str, height=text_area_height, key="view_b", disabled=True, label_visibility="collapsed")
+            st.markdown(view_b_html, unsafe_allow_html=True)
 
     elif lines_a is None or lines_b is None:
         st.error("Could not process one or both files. Please check the file format and encoding.")
