@@ -466,7 +466,7 @@ def generate_ultimate_diff_views(_lines_a_orig, _lines_b_orig, _options_dict, _f
                             minimap_lines.append("equal")
 
              # Add actual lines for this opcode tag
-             if tag == 'equal':
+                if tag == 'equal':
                  for k in range(len(orig_lines_a)):
                      la = format_html_line_tuple(orig_line_nums_a[k], highlight_syntax(orig_lines_a[k], lexer), "diff-equal")
                      lb = format_html_line_tuple(orig_line_nums_b[k], highlight_syntax(orig_lines_b[k], lexer), "diff-equal")
