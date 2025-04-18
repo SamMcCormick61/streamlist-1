@@ -63,6 +63,8 @@ pygments_style = "monokai" if is_dark_theme else "default"
 # --- Generate Combined CSS ---
 # Base styles (without <style> tags)
 base_css_rules = """
+    /* Page Background */
+    body, .block-container { background-color: blue !important; }
     /* General Layout */
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
     div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"] { padding: 0 8px; }
