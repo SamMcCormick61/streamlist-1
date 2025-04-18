@@ -1,0 +1,51 @@
+# Virtual environment
+venv/
+*.venv/
+env/
+.env
+
+# Python cache files
+_pycache_/
+*.py[cod]
+*$py.class
+
+# Compiled files
+*.so
+*.o
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.suo
+.ntvs
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Streamlit secrets (if you use them)
+.streamlit/secrets.toml
